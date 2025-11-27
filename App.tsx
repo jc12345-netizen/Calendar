@@ -4,7 +4,7 @@ import CalendarView from './components/CalendarView';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import EventModal from './components/EventModal';
 import { addMonths, subMonths } from 'date-fns';
-import { LayoutGrid, BarChart3, Plus, Github } from 'lucide-react';
+import { LayoutGrid, BarChart3, Plus } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'chronos_events';
 
