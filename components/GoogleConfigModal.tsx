@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, AlertCircle, Save } from 'lucide-react';
+import { X, ExternalLink, AlertCircle, Save, Link as LinkIcon } from 'lucide-react';
 import { GoogleConfig } from '../types';
 
 interface GoogleConfigModalProps {
@@ -25,6 +25,43 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
     if (clientId && apiKey) {
       onSave({ clientId, apiKey, calendarId: calendarId || 'primary' });
       onClose();
+    }
+  };
+
+  const handleCalendarIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+
+    // Smart detection for pasted URLs
+    if (val.includes('calendar.google.com') && (val.includes('cid=') || val.includes('src='))) {
+      try {
+        const url = new URL(val);
+        const cid = url.searchParams.get('cid');
+        const src = url.searchParams.get('src');
+
+        if (cid) {
+          // 'cid' in shareable links is often base64 encoded
+          try {
+            const decoded = atob(cid);
+            // Verify it looks like an email or id after decoding
+            if (decoded.includes('@') || decoded.endsWith('google.com')) {
+              setCalendarId(decoded);
+              return;
+            }
+          } catch (err) {
+            // Not base64 or failed decode, fall back to raw cid
+          }
+          setCalendarId(cid);
+        } else if (src) {
+          setCalendarId(decodeURIComponent(src));
+        } else {
+          setCalendarId(val);
+        }
+      } catch (err) {
+        // Invalid URL structure, just set value as is
+        setCalendarId(val);
+      }
+    } else {
+      setCalendarId(val);
     }
   };
 
@@ -83,16 +120,19 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Calendar ID</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
+                <span>Calendar ID or Shareable Link</span>
+                <LinkIcon size={14} className="text-gray-400"/>
+              </label>
               <input
                 type="text"
                 value={calendarId}
-                onChange={(e) => setCalendarId(e.target.value)}
+                onChange={handleCalendarIdChange}
                 className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono text-sm"
-                placeholder="primary or your-email@gmail.com"
+                placeholder="Paste link or enter 'primary'"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Use <strong>primary</strong> for your main calendar, or enter a specific email (e.g., <em>jjboychuang@gmail.com</em>).
+                Enter <strong>primary</strong>, an email, or paste a shareable link (e.g. <em>https://calendar.google.com...cid=...</em>).
               </p>
             </div>
           </div>

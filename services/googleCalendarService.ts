@@ -14,37 +14,60 @@ let tokenClient: any;
 let gapiInited = false;
 let gisInited = false;
 
+// Helper to wait for scripts to load
+const waitForGlobal = (key: string, timeout = 5000) => {
+  return new Promise<void>((resolve, reject) => {
+    if ((window as any)[key]) return resolve();
+    
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      if ((window as any)[key]) {
+        clearInterval(interval);
+        resolve();
+      }
+      if (Date.now() - startTime > timeout) {
+        clearInterval(interval);
+        reject(new Error(`Timeout waiting for ${key} script to load`));
+      }
+    }, 100);
+  });
+};
+
 export const initializeGoogleApi = async (clientId: string, apiKey: string): Promise<void> => {
+  // Wait for scripts to be available on window
+  try {
+      await Promise.all([waitForGlobal('gapi'), waitForGlobal('google')]);
+  } catch (e) {
+      console.error("Google scripts not loaded:", e);
+      throw e;
+  }
+
   return new Promise((resolve, reject) => {
     // Load GAPI
-    if (window.gapi) {
-        window.gapi.load('client', async () => {
-        try {
-            await window.gapi.client.init({
-            apiKey: apiKey,
-            discoveryDocs: [DISCOVERY_DOC],
-            });
-            gapiInited = true;
-            checkInit(resolve);
-        } catch (err) {
-            reject(err);
-        }
+    window.gapi.load('client', async () => {
+      try {
+        await window.gapi.client.init({
+          apiKey: apiKey,
+          discoveryDocs: [DISCOVERY_DOC],
         });
-    } else {
-        reject("Google API script not loaded");
-    }
+        gapiInited = true;
+        checkInit(resolve);
+      } catch (err) {
+        reject(err);
+      }
+    });
 
     // Load GIS
-    if (window.google) {
+    try {
         tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: SCOPES,
-        callback: '', // defined later
+            client_id: clientId,
+            scope: SCOPES,
+            callback: '', // defined later in signInAndListEvents
         });
         gisInited = true;
         checkInit(resolve);
-    } else {
-        reject("Google Identity Services script not loaded");
+    } catch (err) {
+        reject(err);
     }
   });
 };
@@ -60,6 +83,10 @@ export const signInAndListEvents = async (
     end: Date,
     calendarId: string = 'primary'
 ): Promise<CalendarEvent[]> => {
+  if (!tokenClient || !gapiInited) {
+      throw new Error("Google API not initialized. Please check your configuration.");
+  }
+
   return new Promise((resolve, reject) => {
     tokenClient.callback = async (resp: any) => {
       if (resp.error) {
@@ -93,7 +120,7 @@ const listUpcomingEvents = async (timeMin: Date, timeMax: Date, calendarId: stri
       'timeMax': timeMax.toISOString(),
       'showDeleted': false,
       'singleEvents': true,
-      'maxResults': 100,
+      'maxResults': 250, // Increased limit
       'orderBy': 'startTime',
     };
     
@@ -106,24 +133,33 @@ const listUpcomingEvents = async (timeMin: Date, timeMax: Date, calendarId: stri
 
     return events.map((event: any) => {
         // Handle full day events which have 'date' instead of 'dateTime'
-        const start = event.start.dateTime 
-            ? new Date(event.start.dateTime) 
-            : new Date(event.start.date); // Midnight local time usually
-        
-        const end = event.end.dateTime 
-            ? new Date(event.end.dateTime) 
-            : new Date(event.end.date);
+        let start, end;
+        if (event.start.dateTime) {
+            start = new Date(event.start.dateTime);
+            end = event.end.dateTime ? new Date(event.end.dateTime) : start;
+        } else if (event.start.date) {
+            // All-day event
+            start = new Date(event.start.date);
+            // Parse local timezone offset if needed, but usually Date(string) works for YYYY-MM-DD
+            // Fix for end date being exclusive in Google Calendar
+             end = event.end.date ? new Date(event.end.date) : start;
+        } else {
+            start = new Date();
+            end = new Date();
+        }
 
-        // Simple heuristic to guess category based on keywords, otherwise default to Meeting
+        // Simple heuristic to guess category based on keywords
         let category = EventCategory.MEETING;
         const lowerSummary = (event.summary || '').toLowerCase();
         
-        if (lowerSummary.includes('lunch') || lowerSummary.includes('dinner') || lowerSummary.includes('party')) {
+        if (lowerSummary.includes('lunch') || lowerSummary.includes('dinner') || lowerSummary.includes('party') || lowerSummary.includes('bday') || lowerSummary.includes('birthday')) {
             category = EventCategory.PERSONAL;
-        } else if (lowerSummary.includes('doctor') || lowerSummary.includes('gym') || lowerSummary.includes('workout')) {
+        } else if (lowerSummary.includes('doctor') || lowerSummary.includes('gym') || lowerSummary.includes('workout') || lowerSummary.includes('meditation')) {
             category = EventCategory.HEALTH;
-        } else if (lowerSummary.includes('study') || lowerSummary.includes('course') || lowerSummary.includes('learn')) {
+        } else if (lowerSummary.includes('study') || lowerSummary.includes('course') || lowerSummary.includes('class') || lowerSummary.includes('learning')) {
             category = EventCategory.LEARNING;
+        } else if (lowerSummary.includes('work') || lowerSummary.includes('standup') || lowerSummary.includes('sync')) {
+            category = EventCategory.WORK;
         }
 
         return {

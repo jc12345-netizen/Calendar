@@ -66,7 +66,7 @@ function App() {
       initializeGoogleApi(googleConfig.clientId, googleConfig.apiKey)
         .then(() => setIsGoogleConnected(true))
         .catch(err => {
-            console.error("Failed to init google api", err);
+            console.error("Failed to init google api:", err);
             setIsGoogleConnected(false);
         });
     }
@@ -85,7 +85,11 @@ function App() {
         .then(fetchedEvents => {
             setGoogleEvents(fetchedEvents);
         })
-        .catch(err => console.error("Error fetching events", err));
+        .catch(err => {
+            console.error("Error fetching events", err);
+            // If fetching fails with auth error, we might need to reset connection state
+            // But usually signInAndListEvents handles auth prompt
+        });
     }
   }, [isGoogleConnected, currentDate, googleConfig]);
 
@@ -122,21 +126,25 @@ function App() {
   const handleSaveGoogleConfig = (config: GoogleConfig) => {
     setGoogleConfig(config);
     localStorage.setItem(GOOGLE_CONFIG_KEY, JSON.stringify(config));
-    // Trigger auth will happen in effect
+    // Effect will trigger initialization
   };
 
   const handleConnectGoogle = () => {
+      // If we are NOT fully connected (initialized), open the modal to allow user to fix config or retry.
+      if (!isGoogleConnected) {
+          setIsGoogleModalOpen(true);
+          return;
+      }
+
+      // If we are connected, try to sync
       if (googleConfig) {
-          // If already configured, try to fetch (which triggers auth if needed)
-           const start = startOfMonth(currentDate);
-           const end = endOfMonth(currentDate);
+           const start = subMonths(startOfMonth(currentDate), 1);
+           const end = addMonths(endOfMonth(currentDate), 1);
            const calendarId = googleConfig.calendarId || 'primary';
 
            signInAndListEvents(start, end, calendarId)
             .then(fetchedEvents => setGoogleEvents(fetchedEvents))
             .catch(err => console.error(err));
-      } else {
-          setIsGoogleModalOpen(true);
       }
   }
 
@@ -197,6 +205,7 @@ function App() {
                     ? 'bg-green-50 border-green-200 text-green-700' 
                     : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                 }`}
+                title={isGoogleConnected ? "Connected" : "Click to configure"}
             >
                 {isGoogleConnected ? (
                     <>
