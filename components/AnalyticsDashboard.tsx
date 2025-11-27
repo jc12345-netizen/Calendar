@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { CalendarEvent, AnalyticsData, AnalyticsPeriod, EventCategory } from '../types';
 import { analyzeSchedule } from '../services/geminiService';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { CATEGORY_COLORS, CATEGORY_BG_COLORS_LIGHT } from '../constants';
 import { Loader2, Sparkles, TrendingUp, Calendar as CalendarIcon, ArrowLeft } from 'lucide-react';
 import { format, isSameDay, startOfWeek, endOfWeek, isWithinInterval } from 'date-fns';
@@ -100,7 +100,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ events, current
         {loading ? (
           <div className="h-full flex flex-col items-center justify-center text-gray-500">
             <Loader2 className="animate-spin mb-4 text-blue-500" size={48} />
-            <p className="animate-pulse">Consulting Gemini AI...</p>
+            <p className="animate-pulse">Analyzing schedule...</p>
           </div>
         ) : !data ? (
           <div className="text-center text-gray-500 mt-20">No data available.</div>
@@ -175,7 +175,7 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ events, current
               <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-2xl shadow-sm border border-blue-100 relative overflow-hidden">
                 <Sparkles className="absolute top-4 right-4 text-blue-200" size={64} strokeWidth={1} />
                 <h3 className="text-blue-900 font-semibold mb-3 flex items-center gap-2 relative z-10">
-                  <Sparkles size={18} className="text-blue-600"/> Gemini Analysis
+                  <Sparkles size={18} className="text-blue-600"/> Smart Insights
                 </h3>
                 <p className="text-blue-800 leading-relaxed relative z-10">
                   {data.summary}
