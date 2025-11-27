@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { CalendarEvent, ViewMode, GoogleConfig } from './types';
 import CalendarView from './components/CalendarView';
@@ -6,9 +5,9 @@ import AnalyticsDashboard from './components/AnalyticsDashboard';
 import EventModal from './components/EventModal';
 import GoogleConfigModal from './components/GoogleConfigModal';
 import ExportModal from './components/ExportModal';
-import { initializeGoogleApi, signInAndListEvents } from './services/googleCalendarService';
+import { initializeGoogleApi, signInToGoogle, getGoogleEvents, signOutFromGoogle } from './services/googleCalendarService';
 import { addMonths, subMonths, startOfMonth, endOfMonth } from 'date-fns';
-import { LayoutGrid, BarChart3, Plus, Settings, FileDown } from 'lucide-react';
+import { LayoutGrid, BarChart3, Plus, Settings, FileDown, AlertTriangle, X, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'chronos_events';
 const GOOGLE_CONFIG_KEY = 'chronos_google_config';
@@ -19,8 +18,13 @@ function App() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [googleEvents, setGoogleEvents] = useState<CalendarEvent[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('calendar');
-  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  
+  // Google State
+  const [isApiReady, setIsApiReady] = useState(false); // Scripts loaded
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // User logged in
+  const [isSyncing, setIsSyncing] = useState(false);
   const [googleConfig, setGoogleConfig] = useState<GoogleConfig | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -62,36 +66,22 @@ function App() {
 
   // Initialize Google API if config exists
   useEffect(() => {
-    if (googleConfig) {
+    if (googleConfig && !isApiReady) {
       initializeGoogleApi(googleConfig.clientId, googleConfig.apiKey)
-        .then(() => setIsGoogleConnected(true))
+        .then(() => setIsApiReady(true))
         .catch(err => {
             console.error("Failed to init google api:", err);
-            setIsGoogleConnected(false);
+            setSyncError("Failed to initialize Google API. Please check your Client ID and API Key.");
         });
     }
-  }, [googleConfig]);
+  }, [googleConfig, isApiReady]);
 
-  // Fetch Google Events when connected and date changes (fetch for whole month)
+  // Fetch Google Events whenever Date changes OR Authentication happens
   useEffect(() => {
-    if (isGoogleConnected && googleConfig) {
-      // Fetch 3 months range to be safe (prev, current, next)
-      const start = subMonths(startOfMonth(currentDate), 1);
-      const end = addMonths(endOfMonth(currentDate), 1);
-      
-      const calendarId = googleConfig.calendarId || 'primary';
-
-      signInAndListEvents(start, end, calendarId)
-        .then(fetchedEvents => {
-            setGoogleEvents(fetchedEvents);
-        })
-        .catch(err => {
-            console.error("Error fetching events", err);
-            // If fetching fails with auth error, we might need to reset connection state
-            // But usually signInAndListEvents handles auth prompt
-        });
+    if (isApiReady && isAuthenticated && googleConfig) {
+      fetchGoogleEvents();
     }
-  }, [isGoogleConnected, currentDate, googleConfig]);
+  }, [isAuthenticated, currentDate, isApiReady]);
 
   // Save local data on change
   useEffect(() => {
@@ -102,7 +92,69 @@ function App() {
     return [...events, ...googleEvents];
   }, [events, googleEvents]);
 
-  // --- Handlers ---
+  // --- Actions ---
+
+  const fetchGoogleEvents = async () => {
+    if (!googleConfig) return;
+    setIsSyncing(true);
+    setSyncError(null);
+
+    const start = subMonths(startOfMonth(currentDate), 1);
+    const end = addMonths(endOfMonth(currentDate), 1);
+    const calendarId = googleConfig.calendarId || 'primary';
+
+    try {
+        const fetchedEvents = await getGoogleEvents(start, end, calendarId);
+        setGoogleEvents(fetchedEvents);
+    } catch (err: any) {
+        console.error("Error fetching events", err);
+        const msg = err.result?.error?.message || err.message || "Unknown error";
+        
+        if (msg.includes("Not Found") || (err.result?.error?.code === 404)) {
+            setSyncError(`Calendar ID "${calendarId}" was not found. Please ensure you have added this calendar to your Google account or that the ID is correct.`);
+        } else if (msg.includes("Login Required") || msg.includes("No access token")) {
+            setIsAuthenticated(false); // Token invalid, need re-login
+        } else {
+            setSyncError(`Sync Error: ${msg}`);
+        }
+    } finally {
+        setIsSyncing(false);
+    }
+  };
+
+  const handleManualSync = async () => {
+      if (!isApiReady) {
+          setIsGoogleModalOpen(true);
+          return;
+      }
+
+      setSyncError(null);
+      setIsSyncing(true);
+
+      try {
+          await signInToGoogle();
+          setIsAuthenticated(true);
+          // fetchGoogleEvents will trigger via useEffect due to isAuthenticated change
+      } catch (err: any) {
+          console.error("Sign in failed", err);
+          setIsSyncing(false);
+          if (err.error === 'popup_blocked_by_browser') {
+              setSyncError("Login popup was blocked. Please allow popups for this site.");
+          } else {
+              setSyncError("Google Sign-In failed. Please try again.");
+          }
+      }
+  };
+
+  const handleDisconnectGoogle = () => {
+      signOutFromGoogle();
+      setGoogleConfig(null);
+      setGoogleEvents([]);
+      setIsAuthenticated(false);
+      localStorage.removeItem(GOOGLE_CONFIG_KEY);
+      // We don't necessarily need to reset isApiReady unless we want to, 
+      // but keeping scripts loaded is fine.
+  };
 
   const handleAddEvent = (eventData: Omit<CalendarEvent, 'id'>) => {
     if (editingEvent) {
@@ -126,27 +178,8 @@ function App() {
   const handleSaveGoogleConfig = (config: GoogleConfig) => {
     setGoogleConfig(config);
     localStorage.setItem(GOOGLE_CONFIG_KEY, JSON.stringify(config));
-    // Effect will trigger initialization
+    setIsApiReady(false); // Reset to force re-init
   };
-
-  const handleConnectGoogle = () => {
-      // If we are NOT fully connected (initialized), open the modal to allow user to fix config or retry.
-      if (!isGoogleConnected) {
-          setIsGoogleModalOpen(true);
-          return;
-      }
-
-      // If we are connected, try to sync
-      if (googleConfig) {
-           const start = subMonths(startOfMonth(currentDate), 1);
-           const end = addMonths(endOfMonth(currentDate), 1);
-           const calendarId = googleConfig.calendarId || 'primary';
-
-           signInAndListEvents(start, end, calendarId)
-            .then(fetchedEvents => setGoogleEvents(fetchedEvents))
-            .catch(err => console.error(err));
-      }
-  }
 
   const openNewEventModal = (date?: Date) => {
     setEditingEvent(null);
@@ -165,7 +198,7 @@ function App() {
     <div className="h-screen w-screen flex bg-gray-50 text-gray-900 font-sans overflow-hidden">
       
       {/* Sidebar / Navigation */}
-      <aside className="w-20 lg:w-64 bg-white border-r border-gray-200 flex flex-col justify-between py-6 px-4 shrink-0 transition-all">
+      <aside className="w-20 lg:w-64 bg-white border-r border-gray-200 flex flex-col justify-between py-6 px-4 shrink-0 transition-all z-20">
          <div className="space-y-8">
             <div className="flex items-center gap-3 justify-center lg:justify-start">
                <div className="w-10 h-10 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-200">
@@ -198,29 +231,53 @@ function App() {
 
          {/* Bottom Action */}
          <div className="space-y-3">
-            <button 
-                onClick={handleConnectGoogle}
-                className={`w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-xl transition-all border ${
-                    isGoogleConnected 
-                    ? 'bg-green-50 border-green-200 text-green-700' 
-                    : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
-                title={isGoogleConnected ? "Connected" : "Click to configure"}
-            >
-                {isGoogleConnected ? (
-                    <>
-                        <div className="relative w-4 h-4">
-                            <svg viewBox="0 0 24 24" className="w-full h-full"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-                        </div>
-                        <span className="hidden lg:block text-xs font-medium">Synced</span>
-                    </>
-                ) : (
-                    <>
+            
+            {/* Sync Button Logic */}
+            {!googleConfig ? (
+                <button 
+                    onClick={() => setIsGoogleModalOpen(true)}
+                    className="w-full flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-xl transition-all border bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                    <Settings size={18} />
+                    <span className="hidden lg:block text-xs font-medium">Setup Google</span>
+                </button>
+            ) : !isAuthenticated ? (
+                <div className="flex gap-2">
+                    <button 
+                        onClick={handleManualSync}
+                        disabled={!isApiReady || isSyncing}
+                        className="flex-1 flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-xl transition-all border bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                    >
+                        {isSyncing ? <RefreshCw size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+                        <span className="hidden lg:block text-xs font-medium">Sync Calendar</span>
+                    </button>
+                     <button 
+                        onClick={() => setIsGoogleModalOpen(true)}
+                        className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                        title="Settings"
+                    >
                         <Settings size={18} />
-                        <span className="hidden lg:block text-xs font-medium">Link Google</span>
-                    </>
-                )}
-            </button>
+                    </button>
+                </div>
+            ) : (
+                <div className="flex gap-2">
+                     <button 
+                        onClick={() => fetchGoogleEvents()}
+                        className="flex-1 flex items-center justify-center lg:justify-start gap-3 px-3 py-2 rounded-xl transition-all border bg-green-50 border-green-200 text-green-700"
+                        title="Click to refresh"
+                    >
+                        {isSyncing ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                        <span className="hidden lg:block text-xs font-medium">Synced</span>
+                    </button>
+                    <button 
+                        onClick={() => setIsGoogleModalOpen(true)}
+                        className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                        title="Settings"
+                    >
+                        <Settings size={18} />
+                    </button>
+                </div>
+            )}
 
             <button 
                 onClick={() => setIsExportModalOpen(true)}
@@ -241,26 +298,40 @@ function App() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 h-full overflow-hidden relative">
-        {viewMode === 'calendar' ? (
-          <div className="h-full p-4 lg:p-8">
-            <CalendarView 
-              currentDate={currentDate}
-              events={allEvents}
-              onDateChange={setCurrentDate}
-              onAddEvent={openNewEventModal}
-              onEventClick={openEditEventModal}
-              onPrevMonth={() => setCurrentDate(subMonths(currentDate, 1))}
-              onNextMonth={() => setCurrentDate(addMonths(currentDate, 1))}
-            />
+      <main className="flex-1 h-full overflow-hidden relative flex flex-col">
+        {syncError && (
+          <div className="bg-red-50 border-b border-red-100 px-4 py-3 flex items-start sm:items-center justify-between gap-4 text-sm text-red-700 animate-fade-in z-30">
+             <div className="flex items-start gap-2">
+                <AlertTriangle size={18} className="shrink-0 mt-0.5 sm:mt-0" />
+                <span>{syncError}</span>
+             </div>
+             <button onClick={() => setSyncError(null)} className="p-1 hover:bg-red-100 rounded-full transition-colors shrink-0">
+                <X size={16} />
+             </button>
           </div>
-        ) : (
-          <AnalyticsDashboard 
-            events={allEvents}
-            currentDate={currentDate}
-            onBack={() => setViewMode('calendar')}
-          />
         )}
+
+        <div className="flex-1 overflow-hidden relative z-10">
+          {viewMode === 'calendar' ? (
+            <div className="h-full p-4 lg:p-8">
+              <CalendarView 
+                currentDate={currentDate}
+                events={allEvents}
+                onDateChange={setCurrentDate}
+                onAddEvent={openNewEventModal}
+                onEventClick={openEditEventModal}
+                onPrevMonth={() => setCurrentDate(subMonths(currentDate, 1))}
+                onNextMonth={() => setCurrentDate(addMonths(currentDate, 1))}
+              />
+            </div>
+          ) : (
+            <AnalyticsDashboard 
+              events={allEvents}
+              currentDate={currentDate}
+              onBack={() => setViewMode('calendar')}
+            />
+          )}
+        </div>
       </main>
 
       {/* Modals */}
@@ -277,6 +348,7 @@ function App() {
         isOpen={isGoogleModalOpen}
         onClose={() => setIsGoogleModalOpen(false)}
         onSave={handleSaveGoogleConfig}
+        onDisconnect={handleDisconnectGoogle}
         initialConfig={googleConfig || undefined}
       />
 

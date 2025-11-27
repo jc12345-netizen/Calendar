@@ -62,7 +62,7 @@ export const initializeGoogleApi = async (clientId: string, apiKey: string): Pro
         tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
             scope: SCOPES,
-            callback: '', // defined later in signInAndListEvents
+            callback: '', // defined dynamically in signInToGoogle
         });
         gisInited = true;
         checkInit(resolve);
@@ -78,105 +78,130 @@ const checkInit = (resolve: () => void) => {
   }
 };
 
-export const signInAndListEvents = async (
-    start: Date, 
-    end: Date,
-    calendarId: string = 'primary'
-): Promise<CalendarEvent[]> => {
+/**
+ * Triggers the Google Sign-In Popup.
+ * MUST be called from a user event handler (e.g. button click) to avoid popup blockers.
+ */
+export const signInToGoogle = (): Promise<void> => {
   if (!tokenClient || !gapiInited) {
-      throw new Error("Google API not initialized. Please check your configuration.");
+      return Promise.reject(new Error("Google API not initialized."));
   }
 
   return new Promise((resolve, reject) => {
-    tokenClient.callback = async (resp: any) => {
+    tokenClient.callback = (resp: any) => {
       if (resp.error) {
         reject(resp);
-        return;
-      }
-      try {
-        const events = await listUpcomingEvents(start, end, calendarId);
-        resolve(events);
-      } catch (err) {
-        reject(err);
+      } else {
+        resolve(); // Token is now stored in gapi client internally
       }
     };
 
-    if (window.gapi.client.getToken() === null) {
-      // Prompt the user to select a Google Account and ask for consent to share their data
-      // when there's no session token.
-      tokenClient.requestAccessToken({ prompt: 'consent' });
-    } else {
-      // Skip display of account chooser and consent dialog for an existing session.
-      tokenClient.requestAccessToken({ prompt: '' });
-    }
+    // Always use consent prompt for the first time to ensure we get a fresh token
+    // In a production app, you might check if a token exists, but 'prompt: ""' 
+    // can still trigger popups which we want to control.
+    tokenClient.requestAccessToken({ prompt: '' });
   });
 };
 
-const listUpcomingEvents = async (timeMin: Date, timeMax: Date, calendarId: string): Promise<CalendarEvent[]> => {
-  try {
-    const request = {
-      'calendarId': calendarId,
-      'timeMin': timeMin.toISOString(),
-      'timeMax': timeMax.toISOString(),
-      'showDeleted': false,
-      'singleEvents': true,
-      'maxResults': 250, // Increased limit
-      'orderBy': 'startTime',
-    };
-    
-    const response = await window.gapi.client.calendar.events.list(request);
-    const events = response.result.items;
-    
-    if (!events || events.length === 0) {
-      return [];
+export const signOutFromGoogle = (): void => {
+    try {
+        const token = window.gapi?.client?.getToken()?.access_token;
+        if (token && window.google?.accounts?.oauth2) {
+            window.google.accounts.oauth2.revoke(token, () => {
+                console.log("Token revoked");
+            });
+        }
+        if (window.gapi?.client) {
+            window.gapi.client.setToken(null);
+        }
+    } catch (e) {
+        console.error("Error signing out", e);
+    }
+};
+
+/**
+ * Fetches events using the existing session.
+ */
+export const getGoogleEvents = async (
+    start: Date, 
+    end: Date, 
+    calendarId: string
+): Promise<CalendarEvent[]> => {
+    // Check if we have a token (rough check)
+    if (!window.gapi.client.getToken()) {
+        throw new Error("No access token. Please sign in.");
     }
 
-    return events.map((event: any) => {
-        // Handle full day events which have 'date' instead of 'dateTime'
-        let start, end;
-        if (event.start.dateTime) {
-            start = new Date(event.start.dateTime);
-            end = event.end.dateTime ? new Date(event.end.dateTime) : start;
-        } else if (event.start.date) {
-            // All-day event
-            start = new Date(event.start.date);
-            // Parse local timezone offset if needed, but usually Date(string) works for YYYY-MM-DD
-            // Fix for end date being exclusive in Google Calendar
-             end = event.end.date ? new Date(event.end.date) : start;
-        } else {
-            start = new Date();
-            end = new Date();
-        }
-
-        // Simple heuristic to guess category based on keywords
-        let category = EventCategory.MEETING;
-        const lowerSummary = (event.summary || '').toLowerCase();
-        
-        if (lowerSummary.includes('lunch') || lowerSummary.includes('dinner') || lowerSummary.includes('party') || lowerSummary.includes('bday') || lowerSummary.includes('birthday')) {
-            category = EventCategory.PERSONAL;
-        } else if (lowerSummary.includes('doctor') || lowerSummary.includes('gym') || lowerSummary.includes('workout') || lowerSummary.includes('meditation')) {
-            category = EventCategory.HEALTH;
-        } else if (lowerSummary.includes('study') || lowerSummary.includes('course') || lowerSummary.includes('class') || lowerSummary.includes('learning')) {
-            category = EventCategory.LEARNING;
-        } else if (lowerSummary.includes('work') || lowerSummary.includes('standup') || lowerSummary.includes('sync')) {
-            category = EventCategory.WORK;
-        }
-
-        return {
-            id: event.id,
-            title: event.summary || 'No Title',
-            description: event.description,
-            start: start,
-            end: end,
-            category: category,
-            location: event.location,
-            isGoogleEvent: true,
-            googleId: event.id
+    try {
+        const request = {
+            'calendarId': calendarId,
+            'timeMin': timeMinToISO(start),
+            'timeMax': timeMinToISO(end),
+            'showDeleted': false,
+            'singleEvents': true,
+            'maxResults': 250,
+            'orderBy': 'startTime',
         };
-    });
+        
+        const response = await window.gapi.client.calendar.events.list(request);
+        const events = response.result.items;
+        
+        if (!events || events.length === 0) {
+            return [];
+        }
 
-  } catch (err) {
-    console.error("Error fetching Google events", err);
-    throw err;
-  }
+        return events.map((event: any) => parseGoogleEvent(event));
+
+    } catch (err: any) {
+        console.error("Error fetching Google events", err);
+        throw err;
+    }
+};
+
+// Helper to ensure dates are ISO strings
+const timeMinToISO = (date: Date) => {
+    return date.toISOString();
+};
+
+const parseGoogleEvent = (event: any): CalendarEvent => {
+    let start: Date, end: Date;
+
+    if (event.start.dateTime) {
+        // Timed event
+        start = new Date(event.start.dateTime);
+        end = event.end.dateTime ? new Date(event.end.dateTime) : start;
+    } else if (event.start.date) {
+        // All-day event
+        // Note: Google all-day end date is exclusive, but for display we usually treat it simply
+        // We parse the YYYY-MM-DD string as local time to avoid timezone shifts
+        const parts = event.start.date.split('-');
+        start = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        
+        const endParts = event.end.date ? event.end.date.split('-') : parts;
+        end = new Date(Number(endParts[0]), Number(endParts[1]) - 1, Number(endParts[2]));
+    } else {
+        start = new Date();
+        end = new Date();
+    }
+
+    // Heuristic for category
+    let category = EventCategory.MEETING;
+    const lowerSummary = (event.summary || '').toLowerCase();
+    
+    if (lowerSummary.includes('lunch') || lowerSummary.includes('dinner') || lowerSummary.includes('party') || lowerSummary.includes('bday') || lowerSummary.match(/birthday/)) category = EventCategory.PERSONAL;
+    else if (lowerSummary.match(/doctor|gym|workout|meditation|dentist/)) category = EventCategory.HEALTH;
+    else if (lowerSummary.match(/study|course|class|learning|tutorial/)) category = EventCategory.LEARNING;
+    else if (lowerSummary.match(/work|standup|sync|meeting|dev|code/)) category = EventCategory.WORK;
+
+    return {
+        id: event.id,
+        title: event.summary || 'No Title',
+        description: event.description,
+        start: start,
+        end: end,
+        category: category,
+        location: event.location,
+        isGoogleEvent: true,
+        googleId: event.id
+    };
 };

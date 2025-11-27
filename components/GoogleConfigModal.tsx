@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { X, ExternalLink, AlertCircle, Save, Link as LinkIcon } from 'lucide-react';
+import { X, ExternalLink, AlertCircle, Save, Link as LinkIcon, Info, Trash2 } from 'lucide-react';
 import { GoogleConfig } from '../types';
 
 interface GoogleConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (config: GoogleConfig) => void;
+  onDisconnect?: () => void;
   initialConfig?: GoogleConfig;
 }
 
@@ -13,6 +14,7 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
   isOpen, 
   onClose, 
   onSave, 
+  onDisconnect,
   initialConfig 
 }) => {
   const [clientId, setClientId] = useState(initialConfig?.clientId || '');
@@ -28,8 +30,21 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
     }
   };
 
+  const handleDisconnect = () => {
+    if (confirm("Are you sure you want to disconnect Google Calendar? This will clear your credentials and remove synced events from this view.")) {
+        if (onDisconnect) onDisconnect();
+        onClose();
+    }
+  }
+
   const handleCalendarIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
+    const originalVal = e.target.value;
+    let val = originalVal;
+
+    // Auto-prepend https if missing for URL parsing
+    if (val.match(/^calendar\.google\.com/)) {
+        val = 'https://' + val;
+    }
 
     // Smart detection for pasted URLs
     if (val.includes('calendar.google.com') && (val.includes('cid=') || val.includes('src='))) {
@@ -58,10 +73,10 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
         }
       } catch (err) {
         // Invalid URL structure, just set value as is
-        setCalendarId(val);
+        setCalendarId(originalVal);
       }
     } else {
-      setCalendarId(val);
+      setCalendarId(originalVal);
     }
   };
 
@@ -131,20 +146,37 @@ const GoogleConfigModal: React.FC<GoogleConfigModalProps> = ({
                 className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono text-sm"
                 placeholder="Paste link or enter 'primary'"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Enter <strong>primary</strong>, an email, or paste a shareable link (e.g. <em>https://calendar.google.com...cid=...</em>).
-              </p>
+              <div className="flex gap-2 mt-2 text-xs text-gray-500">
+                  <Info size={14} className="shrink-0 mt-0.5" />
+                  <p>
+                    Paste the full shareable link to auto-extract the ID. 
+                    <br/>
+                    <strong>Note:</strong> If this is a shared calendar, ensure you have added it to your Google account first.
+                  </p>
+              </div>
             </div>
           </div>
 
-          <button
-            onClick={handleSave}
-            disabled={!clientId || !apiKey}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed rounded-xl font-medium transition-colors shadow-lg shadow-blue-200"
-          >
-            <Save size={18} />
-            Save & Connect
-          </button>
+          <div className="flex flex-col gap-3">
+              <button
+                onClick={handleSave}
+                disabled={!clientId || !apiKey}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed rounded-xl font-medium transition-colors shadow-lg shadow-blue-200"
+              >
+                <Save size={18} />
+                Save & Connect
+              </button>
+
+              {initialConfig && (
+                  <button
+                    onClick={handleDisconnect}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 text-red-600 bg-red-50 hover:bg-red-100 rounded-xl font-medium transition-colors border border-red-100"
+                  >
+                    <Trash2 size={18} />
+                    Disconnect Account
+                  </button>
+              )}
+          </div>
         </div>
       </div>
     </div>
