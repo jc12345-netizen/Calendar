@@ -1,0 +1,5 @@
+{
+  "name": "Chronos Insight",
+  "description": "A smart calendar application that tracks your schedule and uses Gemini AI to provide daily and weekly productivity analytics, time-tracking statistics, and personalized improvement suggestions.",
+  "requestFramePermissions": []
+}
