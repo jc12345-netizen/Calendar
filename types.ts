@@ -14,6 +14,9 @@ export interface CalendarEvent {
   start: Date;
   end: Date;
   category: EventCategory;
+  isGoogleEvent?: boolean;
+  googleId?: string;
+  location?: string;
 }
 
 export interface AnalyticsData {
@@ -26,3 +29,9 @@ export interface AnalyticsData {
 
 export type ViewMode = 'calendar' | 'analytics';
 export type AnalyticsPeriod = 'day' | 'week';
+
+export interface GoogleConfig {
+  clientId: string;
+  apiKey: string;
+  calendarId?: string;
+}

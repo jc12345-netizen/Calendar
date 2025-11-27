@@ -126,12 +126,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({
                        onEventClick(event);
                     }}
                     className={`
-                      text-xs px-1.5 py-0.5 rounded truncate cursor-pointer transition-transform hover:scale-[1.02] active:scale-95
-                      ${CATEGORY_COLORS[event.category]} text-white bg-opacity-90 hover:bg-opacity-100 shadow-sm
+                      text-xs px-1.5 py-0.5 rounded truncate cursor-pointer transition-transform hover:scale-[1.02] active:scale-95 flex items-center gap-1
+                      ${event.isGoogleEvent 
+                        ? 'bg-orange-100 text-orange-800 border border-orange-200' 
+                        : `${CATEGORY_COLORS[event.category]} text-white bg-opacity-90 hover:bg-opacity-100 shadow-sm`
+                      }
                     `}
                     title={`${event.title} (${format(event.start, 'p')})`}
                   >
-                    {format(event.start, 'HH:mm')} {event.title}
+                    {event.isGoogleEvent && <span className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0"></span>}
+                    <span className="truncate">
+                        {format(event.start, 'HH:mm')} {event.title}
+                    </span>
                   </div>
                 ))}
                 {dayEvents.length > 4 && (
